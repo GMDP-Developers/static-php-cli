@@ -1,0 +1,89 @@
+name: Custom Build FrankenPHP
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-frankenphp:
+    name: Build FrankenPHP with Custom Extensions
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Clean workspace
+        run: |
+          rm -rf spc spc.tgz buildroot downloads source
+
+      - name: Download SPC binary
+        run: |
+          curl -fsSL -o spc.tgz https://dl.static-php.dev/static-php-cli/spc-bin/nightly/spc-linux-x86_64.tar.gz && tar -zxvf spc.tgz && rm spc.tgz
+          chmod +x ./spc
+          ./spc --version
+
+      - name: Download sources by extensions
+        run: |
+          ./spc download \
+            --with-php=8.4 \
+            --for-extensions "apcu,bcmath,calendar,ctype,curl,dba,dom,exif,fileinfo,filter,gd,iconv,igbinary,intl,mbregex,mbstring,msgpack,mysqli,mysqlnd,opcache,openssl,pcntl,pdo,pdo_mysql,pdo_pgsql,pdo_sqlite,pgsql,phar,posix,readline,redis,session,simplexml,sockets,sodium,sqlite3,tokenizer,xml,xmlreader,xmlwriter,xsl,zip,zlib" \
+            --prefer-pre-built \
+            --debug
+
+      - name: Install UPX
+        run: |
+          ./spc install-pkg upx --debug
+
+      - name: Install go-xcaddy for FrankenPHP
+        run: |
+          ./spc install-pkg go-xcaddy --debug
+
+      - name: Auto-check and prepare build environment
+        run: |
+          ./spc doctor --auto-fix --debug
+
+      - name: Build FrankenPHP
+        run: |
+          ./spc build \
+            --build-frankenphp "apcu,bcmath,calendar,ctype,curl,dba,dom,exif,fileinfo,filter,gd,iconv,igbinary,intl,mbregex,mbstring,msgpack,mysqli,mysqlnd,opcache,openssl,pcntl,pdo,pdo_mysql,pdo_pgsql,pdo_sqlite,pgsql,phar,posix,readline,redis,session,simplexml,sockets,sodium,sqlite3,tokenizer,xml,xmlreader,xmlwriter,xsl,zip,zlib" \
+            --with-libs="libavif,libjpeg,libwebp" \
+            --debug \
+            --enable-zts \
+            --with-upx-pack \
+            -I "memory_limit=512M" \
+            -I "opcache.jit=tracing" \
+            -I "opcache.jit_buffer_size=128M" \
+            -I "max_execution_time = 60" \
+            -I "max_input_time = 60" \
+            -I "post_max_size = 100M" \
+            -I "upload_max_filesize = 10M" \
+            -I "max_file_uploads = 20" \
+            -I "max_input_vars = 3000"
+
+      - name: Verify build output
+        run: |
+          ls -lah ./buildroot/bin/
+          if [ -f ./buildroot/bin/frankenphp ]; then
+            echo "✅ FrankenPHP binary found"
+            file ./buildroot/bin/frankenphp
+            ./buildroot/bin/frankenphp version || true
+          else
+            echo "❌ FrankenPHP binary not found"
+            exit 1
+          fi
+
+      - name: Upload FrankenPHP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frankenphp
+          path: ./buildroot/bin/frankenphp
+          if-no-files-found: error
+          retention-days: 30
+
+      - uses: actions/upload-artifact@v4
+        name: "Upload Build Metadata"
+        with:
+          name: build-meta
+          path: |
+            buildroot/build-extensions.json
+            buildroot/build-libraries.json
